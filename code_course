@@ -1,0 +1,165 @@
+# 加载已安装的包
+library(openxlsx)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(tableone)
+library(car)
+library(Hmisc)
+library(rms)
+library(Matchit)
+library(PSweight)
+
+# 读取数据
+data <- read.csv("testdat.csv")  #已插补adjust
+
+#进行二分类logistic回归实践操作
+#1：明确logistic回归分析的基本条件
+#条件1：因变量（结局变量）是二分类，本研究为是否发生院内死亡，所以满足
+#条件2：至少有一个自变量，定量资料或定性资料均可，本研究包含多个自变量，所以满足
+#条件3：个体间相互独立，根据专业判断，本研究满足独立性假设
+#条件4：结局变量分类较少的人群例数是自变量个数的10~15倍（EPV原则），该条件需要进行判断，下面介绍；
+#条件5：自变量之间无多重共线性，该条件需要进行判断，下面介绍；
+#条件6：自变量不存在显著的异常值，该条件需要进行判断，下面介绍；
+#条件7：数据未出现完全分离或拟完全分离现象，该条件需要进行判断，下面介绍；
+
+# 对每个污染物浓度进行三分法分组
+data$no2_group <- cut(data$no2.1Y, breaks = quantile(data$no2.1Y, probs = 0:3/3, na.rm = TRUE), 
+                      labels = c("Low", "Medium", "High"), include.lowest = TRUE)
+
+data$o3_group <- cut(data$o3.1Y, breaks = quantile(data$o3.1Y, probs = 0:3/3, na.rm = TRUE), 
+                     labels = c("Low", "Medium", "High"), include.lowest = TRUE)
+
+data$so2_group <- cut(data$so2.1Y, breaks = quantile(data$so2.1Y, probs = 0:3/3, na.rm = TRUE), 
+                      labels = c("Low", "Medium", "High"), include.lowest = TRUE)
+
+data$pm10_group <- cut(data$pm10.1Y, breaks = quantile(data$pm10.1Y, probs = 0:3/3, na.rm = TRUE), 
+                       labels = c("Low", "Medium", "High"), include.lowest = TRUE)
+
+data$pm2_5_group <- cut(data$pm2_5.1Y, breaks = quantile(data$pm2_5.1Y, probs = 0:3/3, na.rm = TRUE), 
+                        labels = c("Low", "Medium", "High"), include.lowest = TRUE)
+
+data$co_group <- cut(data$co.1Y, breaks = quantile(data$co.1Y, probs = 0:3/3, na.rm = TRUE), 
+                     labels = c("Low", "Medium", "High"), include.lowest = TRUE)
+# 生成交叉表
+table(data$LUTS, data$no2_group)
+table(data$LUTS, data$o3_group)
+table(data$LUTS, data$so2_group)
+table(data$LUTS, data$pm10_group)
+table(data$LUTS, data$pm2_5_group)
+table(data$LUTS, data$co_group)
+
+library(officer)
+library(flextable)
+# 生成交叉表
+# 将每个交叉表转换为 flextable
+ft_no2 <- qflextable(as.data.frame(table_no2))
+ft_o3 <- qflextable(as.data.frame(table_o3))
+ft_so2 <- qflextable(as.data.frame(table_so2))
+ft_pm10 <- qflextable(as.data.frame(table_pm10))
+ft_pm2_5 <- qflextable(as.data.frame(table_pm2_5))
+ft_co <- qflextable(as.data.frame(table_co))
+# 创建一个 Word 文档
+doc <- read_docx()
+# 插入标题和交叉表
+doc <- doc %>%
+  body_add_par("LUTS vs NO2 Group", style = "heading 1") %>%
+  body_add_flextable(ft_no2) %>%
+  body_add_par("\n", style = "normal") %>%
+  
+  body_add_par("LUTS vs O3 Group", style = "heading 1") %>%
+  body_add_flextable(ft_o3) %>%
+  body_add_par("\n", style = "normal") %>%
+  
+  body_add_par("LUTS vs SO2 Group", style = "heading 1") %>%
+  body_add_flextable(ft_so2) %>%
+  body_add_par("\n", style = "normal") %>%
+  
+  body_add_par("LUTS vs PM10 Group", style = "heading 1") %>%
+  body_add_flextable(ft_pm10) %>%
+  body_add_par("\n", style = "normal") %>%
+  
+  body_add_par("LUTS vs PM2.5 Group", style = "heading 1") %>%
+  body_add_flextable(ft_pm2_5) %>%
+  body_add_par("\n", style = "normal") %>%
+  
+  body_add_par("LUTS vs CO Group", style = "heading 1") %>%
+  body_add_flextable(ft_co) %>%
+  body_add_par("\n", style = "normal")
+# 保存为 Word 文件
+print(doc, target = "cross_tables.docx")
+#基于以上结果，不存在数据分离现象，所以条件7是满足的【也就是有个分类有，有个分类没有】
+
+
+library(autoReg)
+# 批量逻辑回归
+logistic_model <- glm(LUTS ~ no2.1Y + o3.1Y + so2.1Y + pm10.1Y + pm2_5.1Y + co.1Y, 
+                      family =binomial(), data = data)
+result<-autoReg(logistic_model,uni=T) %>% myft()
+result
+library(rrtable)
+table2docx(target="LUTS.logi.docx",result) 
+
+# 单因素筛选后重新构建多因素逻辑回归
+fit <- glm(LUTS ~ no2.1Y + o3.1Y + so2.1Y + pm2_5.1Y + co.1Y,   # pm10.1Y 不行
+                      family = binomial(), data = data)
+
+
+#条件4的判断
+#自变量个数的计算，连续性变量算一个自变量个数，分类变量有多少个分类，算多少个自变量个数
+table(data$LUTS)#结局变量中分类较少的个数是：1003
+#回归分析中拟纳入变量：no2.1Y + o3.1Y + so2.1Y + pm2_5.1Y + co.1Y=5
+#5*10=50<1003,条件4满足
+#条件5的判断
+##共线性诊断-方差膨胀因子##
+library(car)
+vif(fit) #计算vif：所有自变量的VIF均<10，提示自变量之间不存在严重共线性问题。
+#no2.1Y    o3.1Y   so2.1Y pm2_5.1Y    co.1Y 
+#3.381570 1.217955 1.424128 2.974369 2.659653
+#条件6的判断
+##计算cook距离##
+cook<-cooks.distance(fit) #计算cook距离
+cook[cooks.distance(fit)>0.5] #显示cook距离>0.5的个案编号和cook值
+max(cook) #显示最大cook距离：最大的库克距离值为0.06496263<0.5，提示不存在显著异常值
+
+
+##计算OR
+coef<-coef(fit)[-1]#提取估计系数，排除截距项
+coef  #查看提取的模型系数
+
+coef_CI<-confint(fit)[-1,]#提取估计系数置信区间，排除截距项
+coef_CI   #查看提取的系数置信区间
+
+OR_Results<-exp(cbind("OR"=coef,"LL"=coef_CI[,1],"UL"=coef_CI[,2]))#计算OR及置信区间
+OR_Results  #查看OR值及置信区间
+round(OR_Results,2)
+#整理回归结果，并导出到excel
+round(exp(cbind(coef(fit), confint.default(fit))),3) 
+tx1=round(exp(cbind(coef(fit), confint.default(fit))),3) 
+tx1=data.frame(tx1)
+tx1$var=row.names(tx1)
+names(tx1)
+tx1=select(tx1,var,everything())
+names(tx1)=c("自变量","OR","OR_lCI","OR_uCI")
+names(tx1)
+tx1
+write.xlsx(tx1,"多因素分析结果-1.xlsx",overwrite = T)
+
+
+
+#### WQS回归 ####
+library(gWQS)
+# 定义暴露变量
+EDCs <- c("pm2.5_1Y","pm10_1Y","no2_1Y","so2_1Y","co_1Y","o3_1Y")
+#Age+Race+BMI+Job+Marriage+Testosterone +Smoke+HBP+DM
+results_wqs_p <- gwqs(LUTS~wqs+Age+Race+BMI+Job+Marriage+Testosterone +Smoke+HBP+DM, mix_name = EDCs, data = data,
+                      q = 4, validation = 0.6, b = 1000, b1_pos = TRUE,
+                      b_constr = FALSE, family = "binomial", seed = 1003)
+summary(results_wqs_p) #获得WQSindex 的系数、置信区间和P值
+round(exp(coef(results_wqs_p)), digits = 2) # 加权指数的系数
+round(exp(confint(results_wqs_p)), digits = 2) # 加权指数的置信区间
+View(results_wqs_p)
+View(results_wqs_p[["final_weights"]])
+gwqs_barplot(results_wqs_p)
+
